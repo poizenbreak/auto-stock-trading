@@ -39,34 +39,40 @@ def errors(errCode):
 # 로그인서버구분코드
 def loginServerInfo(code):
     serverDict = {1: ('OP_SV_VIRTUAL', '모의투자'),
-                  2: ('OP_SV_REAL', '실거래서버') }
+                  2: ('OP_SV_REAL', '실거래서버')}
 
-    #it must be casted to int.
+    # it must be casted to int.
     if int(code) == 1:
         return serverDict[int(code)]
     else:
         return serverDict[2]
 
 
+# 거래량 코드 조회
 def volumnCode(code):
     '''
 
     :param code: 0,10000,50000,100000,150000,200000,300000,500000,1000000
-    :return:
+    :return: 거래량코드
     '''
     volDict = {
-        0 : "00000",
-        10000 : "00010",
-        50000 : "00050",
-        100000 : "00100",
-        150000 : "00150",
-        200000 : "00200",
-        300000 : "00300",
-        500000 : "00500",
-        1000000 : "01000"
+        0: "00000",
+        10000: "00010",
+        50000: "00050",
+        100000: "00100",
+        150000: "00150",
+        200000: "00200",
+        300000: "00300",
+        500000: "00500",
+        1000000: "01000"
     }
     return volDict[code]
 
 
-def trList():
-    pass
+# 스크린 번호 조회
+def screenNum(TYPE):
+    screenDict = {
+        "MYINFO" : "2000"
+    }
+
+    return screenDict[TYPE]
