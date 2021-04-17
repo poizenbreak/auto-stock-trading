@@ -72,7 +72,7 @@ def volumnCode(code):
 # 스크린 번호 조회
 def screenNum(TYPE):
     screenDict = {
-        "MYINFO" : "2000"
+        "MY_INFO" : "2000"
     }
 
     return screenDict[TYPE]
