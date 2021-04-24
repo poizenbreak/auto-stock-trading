@@ -29,7 +29,9 @@ class Kiwoom(QAxWidget):
         self.useMaxMoney = 0  # 비율설정후 주문가능한 금액
         self.stockTiedMoney = 0  # 주식매입금
         self.accountStockDict = {}  # 계좌평가잔고내역 멀티데이터
-        self.nonContractDict = {} # 미체결 멀티데이터
+        self.nonContractDict = {}  # 미체결 멀티데이터
+        self.stockDayChartDict = {}  # 주식일봉조회데이터
+        self.fieldDayChartDict = {}  # 업종일봉조회데이터
         self.deposit = 0  # 예수금
         self.orderPossible = 0  # 주문가능금액
         self.withdrawPossible = 0  # 출금가능금액
@@ -41,9 +43,15 @@ class Kiwoom(QAxWidget):
         self.eventSlots()
         self.signalLoginCommConnect()
         self.getAccountInfo()
+        self.getCodeListByMarket("0")
+        self.getCodeListByMarket("10")
         self.trRequest("예수금상세현황요청")
         self.trRequest("계좌평가잔고내역요청")
         self.trRequest("미체결요청")
+        fieldDayVarDict = {"업종코드": "001", "기준일자": "20210423"}
+        self.trRequest("업종일봉조회요청", fieldDayVarDict)
+        stockDayVarDict = {"종목코드": "000390", "기준일자": "20210423", "수정주가구분": "0"}
+        self.trRequest("주식일봉차트조회요청", stockDayVarDict)
 
     # can control openapi
     def getOcxInstance(self):
@@ -72,18 +80,35 @@ class Kiwoom(QAxWidget):
     def getAccountInfo(self):
         accountList = self.dynamicCall("GetLoginInfo(QString)", "ACCNO")
         self.serverType = self.dynamicCall("GetLoginInfo(QString)", "GetServerGubun")
-
+        print("서버구분 : ", self.serverType)
         self.accountNum = accountList.split(';')[0]
         print("나의 보유계좌번호 : ", self.accountNum)
         print("접속서버 : ", self.serverType, ", info : ", loginServerInfo(self.serverType))
 
-    def trRequest(self, trType):
+    def getCodeListByMarket(self, marketCode):
+        """
+        종목코드가져오기.
+        :param marketCode: 0:코스피, 10:코스닥
+        :return:
+        """
+        codeList = self.dynamicCall("GetCodeListByMarket(QString)", marketCode)
+        codeList = codeList.split(";")
+        if int(marketCode) == 0:
+            print("코스피 종목코드 개수: ", len(codeList))
+        elif int(marketCode) == 10:
+            print("코스닥 종목코드 개수 : ", len(codeList))
+
+    def trRequest(self, trType, varDict=None):
         if trType == "예수금상세현황요청":
             self.detailAccountInfo()
         elif trType == "계좌평가잔고내역요청":
             self.detailAccountStockInfo()
         elif trType == "미체결요청":
             self.nonContractedInfo()
+        elif trType == "주식일봉차트조회요청":
+            self.stockDayChart(varDict)
+        elif trType == "업종일봉조회요청":
+            self.fieldDayChart(varDict)
 
         print("tr Request event loop start.")
         self.trEventLoop = QEventLoop()
@@ -139,6 +164,40 @@ class Kiwoom(QAxWidget):
         self.dynamicCall("CommRqData(QString,QString,int,QString)", "미체결요청", "opt10075", sPrevNext,
                          screenNum("MY_INFO"))
 
+    # 차트조회요청 api와 계정정보조회요청 api를 구분하도록 리팩토링?
+    def stockDayChart(self, varDict, sPrevNext="0"):
+        """
+        주식일봉차트조회요청
+        :param subjCode: 종목코드
+        :param date: 기준일자 , YYYYMMDD (20160101 연도4자리, 월 2자리, 일 2자리 형식)
+        :param priceType: 수정주가구분 , 0 or 1, 수신데이터 1:유상증자, 2:무상증자, 4:배당락, 8:액면분할, 16:액면병합, 32:기업합병, 64:감자, 256:권리락
+        :return:
+        """
+        self.dynamicCall("DisconnectRealData(QString)", screenNum("CHART"))
+        print("request stock daily chart.")
+
+        self.dynamicCall("SetInputValue(QString,QString)", "종목코드", varDict["종목코드"])
+        self.dynamicCall("SetInputValue(QString,QString)", "기준일자", varDict["기준일자"])
+        self.dynamicCall("SetInputValue(QString,QString)", "수정주가구분", varDict["수정주가구분"])
+
+        self.dynamicCall("CommRqData(QString,QString,int,QString)", "주식일봉차트조회요청", "opt10081", sPrevNext,
+                         screenNum("CHART"))
+
+    def fieldDayChart(self, varDict, sPrevNext="0"):
+        """
+        업종일봉조회요청
+        :param varDict:
+        :param sPrevNext:
+        :return:
+        """
+        print("request field daily chart.")
+
+        self.dynamicCall("SetInputValue(QString,QString)", "업종코드", varDict["업종코드"])
+        self.dynamicCall("SetInputValue(QString,QString)", "기준일자", varDict["기준일자"])
+
+        self.dynamicCall("CommRqData(QString,QString,int,QString)", "업종일봉조회요청", "opt20006", sPrevNext,
+                         screenNum("CHART"))
+
     def trDataSlot(self, sScrNo, sRQName, sTrCode, sRecordName, sPrevNext, nDataLength):
         """
         TR요청을 받는 슬롯
@@ -160,13 +219,104 @@ class Kiwoom(QAxWidget):
         elif sRQName == "미체결요청":
             self.recNonContractedInfo(sRQName, sTrCode)
 
+        elif sRQName == "주식일봉차트조회요청":
+            self.recStockDayChart(sRQName, sTrCode)
+
+        elif sRQName == "업종일봉조회요청":
+            self.recFieldDayChart(sRQName, sTrCode)
+
         print("tr Request event loop end.")
         self.trEventLoop.exit()
+
+    def recFieldDayChart(self, sRQName, sTrCode):
+        code = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, 0, "업종코드")
+        rows = self.dynamicCall("GetRepeatCnt(QString,QString)", sTrCode, sRQName)
+        for i in range(rows):
+            print("업종일봉조회요청 : 최근 ", i + 1, "번째 일자 일봉차트를 가져옵니다.")
+            currentPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "현재가")
+            flowQuantity = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "거래량")
+            flowMoney = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "거래대금")
+            date = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "일자")
+            startPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "시가")
+            highPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "고가")
+            lowPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "저가")
+
+            code = code.strip()
+            currentPrice = int(currentPrice.strip())
+            flowQuantity = int(flowQuantity.strip())
+            flowMoney = int(flowMoney.strip())
+            date = date.strip()
+            startPrice = int(startPrice.strip())
+            highPrice = int(highPrice.strip())
+            lowPrice = int(lowPrice.strip())
+
+            if code in self.fieldDayChartDict:
+                pass
+            else:
+                self.fieldDayChartDict.update({code: {}})
+
+            if date in self.fieldDayChartDict[code]:
+                pass
+            else:
+                self.fieldDayChartDict[code].update({date: {}})
+
+            dayDict = self.fieldDayChartDict[code][date]
+            dayDict["현재가"] = currentPrice
+            dayDict["거래량"] = flowQuantity
+            dayDict["거래대금"] = flowMoney
+            dayDict["시가"] = startPrice
+            dayDict["고가"] = highPrice
+            dayDict["저가"] = lowPrice
+
+        print("업종코드 = ", code, " 업종일봉조회데이터일수 = ", len(self.fieldDayChartDict[code]))
+
+    def recStockDayChart(self, sRQName, sTrCode):
+        code = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, 0, "종목코드")
+        rows = self.dynamicCall("GetRepeatCnt(QString,QString)", sTrCode, sRQName)
+        for i in range(rows):
+            print("주식일봉차트조회요청 : 최근 ", i + 1, "번째 일자 일봉차트를 가져옵니다.")
+            currentPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "현재가")
+            flowQuantity = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "거래량")
+            flowMoney = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "거래대금")
+            date = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "일자")
+            startPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "시가")
+            highPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "고가")
+            lowPrice = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "저가")
+
+            code = code.strip()
+            currentPrice = int(currentPrice.strip())
+            flowQuantity = int(flowQuantity.strip())
+            flowMoney = int(flowMoney.strip())
+            date = date.strip()
+            startPrice = int(startPrice.strip())
+            highPrice = int(highPrice.strip())
+            lowPrice = int(lowPrice.strip())
+
+            if code in self.stockDayChartDict:
+                pass
+            else:
+                self.stockDayChartDict.update({code: {}})
+
+            if date in self.stockDayChartDict[code]:
+                pass
+            else:
+                self.stockDayChartDict[code].update({date: {}})
+
+            dayDict = self.stockDayChartDict[code][date]
+            dayDict["현재가"] = currentPrice
+            dayDict["거래량"] = flowQuantity
+            dayDict["거래대금"] = flowMoney
+            dayDict["시가"] = startPrice
+            dayDict["고가"] = highPrice
+            dayDict["저가"] = lowPrice
+
+        print("종목코드 = ", code)
+        print("주식일봉조회데이터일수 = ", len(self.stockDayChartDict[code]))
 
     def recNonContractedInfo(self, sRQName, sTrCode):
         rows = self.dynamicCall("GetRepeatCnt(QString,QString)", sTrCode, sRQName)
         for i in range(rows):
-            print(i, "번째 종목정보를 가져옵니다.")
+            print("미체결요청 : ", i + 1, "번째 종목정보를 가져옵니다.")
             code = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "종목번호")
             codeNm = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "종목명")
             orderNo = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "주문번호")
@@ -204,7 +354,7 @@ class Kiwoom(QAxWidget):
             nonDict["미체결수량"] = nonQuantity
             nonDict["체결량"] = okQuantity
 
-        print("미체결 종목 : " + self.nonContractDict)
+        print("미체결 종목 : ", self.nonContractDict)
 
     def recDetailAccStockInfo(self, sPrevNext, sRQName, sTrCode):
         """
@@ -224,7 +374,7 @@ class Kiwoom(QAxWidget):
         # cnt를 증가시키면서 첫번째 종목, 두번째 종목 ... 의 멀티데이터(한페이지 최대 20개)를 갖고온다.
         rows = self.dynamicCall("GetRepeatCnt(QString,QString)", sTrCode, sRQName)
         for i in range(rows):
-            print(i, "번째 종목정보를 가져옵니다.")
+            print("계좌평가잔고내역요청 : ", i, "번째 종목정보를 가져옵니다.")
             code = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "종목번호")
             codeNm = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i, "종목명")
             stockQuantity = self.dynamicCall("GetCommData(QString,QString,int,QString)", sTrCode, sRQName, i,

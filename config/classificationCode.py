@@ -42,11 +42,13 @@ def loginServerInfo(code):
                   2: ('OP_SV_REAL', '실거래서버')}
 
     # it must be casted to int.
-    if int(code) == 1:
-        return serverDict[int(code)]
+    if code != None:
+        if int(code) == 1:
+            return serverDict[int(code)]
+        else:
+            return serverDict[2]
     else:
-        return serverDict[2]
-
+        return code
 
 # 거래량 코드 조회
 def volumnCode(code):
@@ -72,7 +74,8 @@ def volumnCode(code):
 # 스크린 번호 조회
 def screenNum(TYPE):
     screenDict = {
-        "MY_INFO" : "2000"
+        "MY_INFO" : "2000",
+        "CHART" : "2001"
     }
 
     return screenDict[TYPE]
