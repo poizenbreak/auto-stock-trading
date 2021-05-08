@@ -1,0 +1,6 @@
+"""
+used in analyzing
+"""
+FIELD_SCAN_PERIOD = 15
+STOCK_SCAN_PERIOD = 50
+USE_MONEY_PERCENT = 0.5

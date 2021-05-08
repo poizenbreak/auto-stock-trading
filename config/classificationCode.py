@@ -50,6 +50,7 @@ def loginServerInfo(code):
     else:
         return code
 
+
 # 거래량 코드 조회
 def volumnCode(code):
     '''
@@ -74,8 +75,32 @@ def volumnCode(code):
 # 스크린 번호 조회
 def screenNum(TYPE):
     screenDict = {
-        "MY_INFO" : "2000",
-        "CHART" : "2001"
+        "MY_INFO": "2000",
+        "CHART": "2001"
     }
 
     return screenDict[TYPE]
+
+
+def fieldCode(TYPE):
+    fieldDict = {
+        "KOSPI": "001",
+        "KOSDAQ": "100"
+    }
+    if TYPE not in fieldDict:
+        return None
+
+    return fieldDict[TYPE]
+
+
+def apiCode(TYPE):
+    apiDict = {
+        "NAVER": 1,
+        "KIWOOM": 2,
+        "KRX": 3
+    }
+
+    if TYPE not in apiDict:
+        return None
+
+    return apiDict[TYPE]
