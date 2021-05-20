@@ -96,7 +96,27 @@ class Kiwoom(QAxWidget):
             self.analyze.selectStrongStockSimple(kospiDownList)
 
         self.recSectorInfo()
-        self.analyze.analyzeStrongStock(self.krxSectorInfo)
+        self.analyze.sortStrongStock(self.krxSectorInfo)
+        self.analyze.setPerformance('FNGUIDE')
+        self.analyze.setPerformance('NAVER')
+        perfDict = self.analyze.comparePerformance()
+        self.writeFile(kospiDownList, perfDict)
+
+    def writeFile(self, kospiDownList, perfDict):
+        DataFrame(perfDict).transpose().to_csv(sysConfig.RESOURCES_DIR + '\\analyze.transpose.csv', sep=',')
+        if len(kospiDownList) == 1:
+            DataFrame(perfDict).to_csv(sysConfig.RESOURCES_DIR + '\\analyze.'
+                                       + kospiDownList[len(kospiDownList) - 1].strftime('%Y%m%d') + '.csv', sep=',')
+            DataFrame(perfDict).transpose().to_csv(sysConfig.RESOURCES_DIR + '\\analyze.transpose.'
+                                                   + kospiDownList[len(kospiDownList) - 1].strftime('%Y%m%d') + '.csv',
+                                                   sep=',')
+        elif len(kospiDownList) > 1:
+            DataFrame(perfDict).to_csv(sysConfig.RESOURCES_DIR + '\\analyze.'
+                                       + kospiDownList[len(kospiDownList) - 1].strftime('%Y%m%d')
+                                       + '_' + kospiDownList[0].strftime('%Y%m%d') + '.csv', sep=',')
+            DataFrame(perfDict).transpose().to_csv(sysConfig.RESOURCES_DIR + '\\analyze.transpose.'
+                                                   + kospiDownList[len(kospiDownList) - 1].strftime('%Y%m%d')
+                                                   + '_' + kospiDownList[0].strftime('%Y%m%d') + '.csv', sep=',')
 
     def kiwoomStockDailyChart(self, kospiDownList):
         """

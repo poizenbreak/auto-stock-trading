@@ -1,12 +1,17 @@
 import pandas as pd
+from numpy.lib import math
 
+from config import sysConfig
 from config.classificationCode import *
 from pandas import Series, DataFrame
 from config.stockConfig import *
 from datetime import datetime
-from krx.market import wrap
+from krx import customWrap
 import numpy as np
 import copy
+from scrap.core import ScrapNaver, ScrapFnguide
+import traceback
+import time
 
 
 class Analyze:
@@ -14,11 +19,12 @@ class Analyze:
 
         self.baseUpdownPer = 2  # 기준 등락률
         self.baseTransMoney = 10000000000  # 기준 거래대금 , 단위 : 백만
-        self.baseMarketCap  = 300000000000 # 기준 시가총액액        self.stochasticParam = [[5, 3, 3], [10, 5, 5]]  # N, M, T
+        self.baseMarketCap = 300000000000  # 기준 시가총액액        self.stochasticParam = [[5, 3, 3], [10, 5, 5]]  # N, M, T
         self.stockStrongDict = {}  # 지수대비강 종목 (거래대금이 xx억이상, 등락률 x퍼이상)
 
         self.stockStrongSortDict = {}  # 등락률까지 고려하여 지수대비강 종목 재계산
         self.sectorStrongSortDict = {}  # 지수대비강 sector 계산
+        self.performanceDict = {}  # 실적
         # self.industryStrongSortDict = {} # 지수대비강 Industry 계산
 
     def analyzeField(self, dict, option):
@@ -132,7 +138,7 @@ class Analyze:
         :return:
         """
         for downDate in kospiDownList:
-            df = wrap.getMarketOhlcvByTicker(downDate, market="ALL")
+            df = customWrap.getMarketOhlcvByTicker(downDate, market="ALL")
             colTransMoney = df.columns[5]
             colChange = df.columns[6]
             colMarketCap = df.columns[7]
@@ -144,31 +150,31 @@ class Analyze:
             removeIndexList = []
             for i in range(len(transMoneyList)):
                 if np.isnan(transMoneyList[i]):
-                    print("종목 ",df.index[i], "에 거래대금 정보가 없습니다.")
+                    print("종목 ", df.index[i], "에 거래대금 정보가 없습니다.")
                     removeIndexList.append(i)
                 elif np.isnan(changeList[i]):
-                    print("종목 ",df.index[i], "에 등락률 정보가 없습니다.")
+                    print("종목 ", df.index[i], "에 등락률 정보가 없습니다.")
                     removeIndexList.append(i)
                 elif type(marketCapList[i]) is not str:
-                    print("종목 ",df.index[i], "에 시가총액 정보가 없습니다.")
+                    print("종목 ", df.index[i], "에 시가총액 정보가 없습니다.")
                     removeIndexList.append(i)
             df = df.drop(removeIndexList)
 
             strongList = df.index[(df[colTransMoney] >= self.baseTransMoney) & (df[colChange] >= float(
-                    self.baseUpdownPer)) & (pd.to_numeric(df[colMarketCap]) >= 300000000000)].tolist()
+                self.baseUpdownPer)) & (pd.to_numeric(df[colMarketCap]) >= 300000000000)].tolist()
             for code in strongList:
                 if downDate in self.stockStrongDict:
                     pass
                 else:
                     self.stockStrongDict.update({downDate: {}})
-                self.stockStrongDict[downDate][code] = df.loc[code,colChange]
+                self.stockStrongDict[downDate][code] = df.loc[code, colChange]
 
-    def analyzeStrongStock(self, sectorInfo):
+    def sortStrongStock(self, sectorInfo):
         """
-        가장 강한 업종 체크?
-        종목의 섹터 카운트하기(종목 중복 허용) sector이나, Industry 둘 각각 체크.
+        1. 가장 강한 업종 체크
+        종목의 섹터 카운트하기(종목 중복 허용) sector 체크.
 
-        가장 강한 종목 체크?
+        2. 가장 강한 종목 체크
         날짜 돌면서 상승률 다 더하기.
         :param sectorInfo:
         :return:
@@ -197,12 +203,12 @@ class Analyze:
                 else:
                     print(code, " 가 업종정보에 등록되어 있지 않습니다.")
 
+        self.stockStrongSortDict
         print(self.stockStrongSortDict)
         strongSeries = Series(self.stockStrongSortDict)
         strongSeries = strongSeries.sort_values(ascending=False)
-        print(strongSeries)
-
-        print(self.sectorStrongSortDict)
+        self.stockStrongSortDict = strongSeries.to_dict()
+        print(self.stockStrongSortDict)
 
         self.sectorStrongSortDict = self.sortDictByListSize(self.sectorStrongSortDict)
 
@@ -212,7 +218,284 @@ class Analyze:
         # for sector in self.sectorStrongSortDict:
         #     print('sector별 size :', sector, ' = ', len(self.sectorStrongSortDict[sector]))
 
+    def calCurQuarter(self):
+        return str(datetime.today().year) + 'Y' + '_' + str(math.ceil(datetime.today().month / 3.0)) + 'Q'
+
+    def calCurYear(self):
+        return str(datetime.today().year) + 'Y'
+
+    def calQuarter(self, date: datetime):
+        return str(date.year) + 'Y' + '_' + str(math.ceil(date.month / 3.0)) + 'Q'
+
+    def calYear(self, date: datetime):
+        return str(date.year) + 'Y'
+
+    def calBeforeYear(self, yearStr: str, beforeCnt: int):
+        return str(int(yearStr.replace('Y', '')) - beforeCnt) + 'Y'
+
+    def calRightBeforeQuarter(self, quarterStr):
+        year = quarterStr.split('_')[0]
+        quar = quarterStr.split('_')[1]
+        if quar != '1Q':
+            rbQuar = str(int(quar.replace('Q', '')) - 1) + 'Q'
+            rbYear = year
+            return rbYear + '_' + rbQuar
+        else:
+            rbQuar = '4Q'
+            rbYear = str(int(year.replace('Y', '')) - 1) + 'Y'
+            return rbYear + '_' + rbQuar
+
+    def calLastSameQuarter(self, quarterStr):
+        year = quarterStr.split('_')[0]
+        quar = quarterStr.split('_')[1]
+        lastYear = str(int(year.replace('Y', '')) - 1) + 'Y'
+        return lastYear + '_' + quar
+
+    def calbeforeQuarter(self, quarterStr: str, beforeCnt: int):
+        year = quarterStr.split('_')[0]
+        quar = quarterStr.split('_')[1]
+        beforeY = int(beforeCnt / 4)
+        beforeQ = beforeCnt % 4
+
+        firstResultY = int(year.replace('Y', '')) - beforeY
+        if beforeQ >= int(quar.replace('Q', '')):
+            return str(firstResultY - 1) + 'Y' + '_' + str(int(quar.replace('Q', '')) + (4 - beforeQ)) + 'Q'
+        else:
+            return str(firstResultY) + 'Y' + '_' + str(int(quar.replace('Q', '')) - beforeQ) + 'Q'
+
+    def calAfterQuarter(self, quarterStr: str, afterCnt: int):
+        year = quarterStr.split('_')[0]
+        quar = quarterStr.split('_')[1]
+        afterY = int(afterCnt / 4)
+        afterQ = afterCnt % 4
+
+        firstResultY = int(year.replace('Y', '')) + afterY
+        if (afterQ + int(quar.replace('Q', ''))) > 4:
+            return str(firstResultY + 1) + 'Y' + '_' + str(int(quar.replace('Q', '')) - (4 - afterQ)) + 'Q'
+        else:
+            return str(firstResultY) + 'Y' + '_' + str(int(quar.replace('Q', '')) + afterQ) + 'Q'
+
+    def setPerformance(self, option):
+        """
+        이전분기와 현재분기를 기준으로 연간실적비교, 분기실적비교하기.
+        :param option:
+        :return:
+        """
+        curQuar = self.calCurQuarter()
+        rightBeforeQuar = self.calbeforeQuarter(curQuar, 1)
+        lastSameQuar = self.calbeforeQuarter(curQuar, 4)
+        rightAfterQuar = self.calAfterQuarter(curQuar, 1)
+        curYear = self.calCurYear()
+        rightBeforeYear = self.calBeforeYear(curYear, 1)
+        # 지수대비강 종목들 리스트를 가져옴.
+        strongSeries = Series(self.stockStrongSortDict)
+        codeList = strongSeries.index.tolist()
+        if option == 'FNGUIDE':
+            failCodeList = []
+            for code in codeList:
+                try:
+                    dfYearCon = ScrapFnguide().getYearlyConsensus(code)
+                    dfQuarCon = ScrapFnguide().getQuarterConsensus(code)
+                except Exception as e:
+                    traceback.print_exc()
+                    print('get consensus failed. code = ', code)
+                    failCodeList.append(codeList)
+                    continue
+
+                # 분기컨센서스 컬럼명 재구성
+                for column in dfQuarCon.columns:
+                    date = datetime.strptime(column.strip().replace('(P)', '').replace('(E)', ''), '%Y/%m')
+                    newDate = self.calQuarter(date)
+                    dfQuarCon.rename(columns={column: newDate}, inplace=True)
+                # 연간컨센서스 컬럼명 재구성
+                for column in dfYearCon.columns:
+                    date = datetime.strptime(column.strip().replace('(P)', '').replace('(E)', ''), '%Y/%m')
+                    newDate = self.calYear(date)
+                    dfYearCon.rename(columns={column: newDate}, inplace=True)
+
+                try:
+                    self.setFnguidePerformance(code, dfYearCon, curYear)
+                    self.setFnguidePerformance(code, dfYearCon, rightBeforeYear)
+                    self.setFnguidePerformance(code, dfQuarCon, curQuar)
+                    self.setFnguidePerformance(code, dfQuarCon, rightBeforeQuar)
+                    self.setFnguidePerformance(code, dfQuarCon, rightAfterQuar)
+
+                except Exception as e:
+                    traceback.print_exc()
+                    print('setPerformance : error occured : code = ', code, ', columns = ', dfQuarCon.columns.tolist())
+                    failCodeList.append(code)
+
+            if len(failCodeList) > 0:
+                print('fail code list exist. try again.')
+                # 실적가져오기 실패된 종목에 대해서 위와 똑같이 한번더 작업하기.
+
+        if option == 'NAVER':
+            failCodeList = []
+            for code in codeList:
+                try:
+                    dfPerf = ScrapNaver().getPerformance(code)
+                except Exception as e:
+                    traceback.print_exc()
+                    print('get consensus failed. code = ', code)
+                    # failCodeList.append(codeList)
+                    continue
+
+                # 분기명 재구성
+                for column in dfPerf.columns:
+                    try:
+                        perfType = column.split(NAVER_COLUMN_SEPARATOR)[0].strip()
+                        dateStr = column.split(NAVER_COLUMN_SEPARATOR)[1]
+                        if perfType == '최근 연간 실적':
+                            date = datetime.strptime(dateStr.strip().replace('(P)', '').replace('(E)', ''), '%Y.%m')
+                            newDate = self.calYear(date)
+                            dfPerf.rename(columns={column: newDate}, inplace=True)
+                        elif perfType == '최근 분기 실적':
+                            date = datetime.strptime(dateStr.strip().replace('(P)', '').replace('(E)', ''), '%Y.%m')
+                            newDate = self.calQuarter(date)
+                            dfPerf.rename(columns={column: newDate}, inplace=True)
+                    except Exception as e:
+                        print('setPerformance : error occured : code = ', code, ', column = ', column)
+
+                try:
+                    # self.setNaverPerformance(code, dfPerf, rightBeforeQuar)
+                    self.setNaverPerformance(code, dfPerf, lastSameQuar)
+                    # self.setNaverPerformance(code, dfPerf, curYear)
+                    # self.setNaverPerformance(code, dfPerf, rightBeforeYear)
+                except Exception as e:
+                    traceback.print_exc()
+                    print('setPerformance : error occured : code = ', code, ', columns = ', dfPerf.columns.tolist())
+                    # failCodeList.append(code)
+
+            if len(failCodeList) > 0:
+                print('fail code list exist. try again.')
+                pass
+                # 실적가져오기 실패된 종목에 대해서 위와 똑같이 한번더 작업하기.
+
+        return self.performanceDict
+
+    def comparePerformance(self):
+        curQuar = self.calCurQuarter()
+        rightBeforeQuar = self.calbeforeQuarter(curQuar, 1)
+        rightAfterQuar = self.calAfterQuarter(curQuar, 1)
+        lastSameQuar = self.calbeforeQuarter(curQuar, 4)
+        curYear = self.calCurYear()
+        rightBeforeYear = self.calBeforeYear(curYear, 1)
+
+        deleteCodeList = []
+        # 없는 컬럼은 nan으로 비교하기 위해 perfDF 생성.
+        perfDF = DataFrame(self.performanceDict).transpose()
+        for code in self.performanceDict.keys():
+            if np.isnan(perfDF.loc[code, (curQuar, 'EPS')]):
+                deleteCodeList.append(code)
+                continue
+            elif perfDF.loc[code, (curQuar, 'EPS')] < 0:
+                deleteCodeList.append(code)
+                continue
+
+            if np.isnan(perfDF.loc[code, (rightBeforeQuar, 'EPS')]):
+                pass
+            elif perfDF.loc[code, (rightBeforeQuar, 'EPS')] < 0:
+                self.performanceDict[code][('VS_RIGHT_BEFORE', 'EPS')] = 9999
+            else:
+                self.performanceDict[code][('VS_RIGHT_BEFORE', 'EPS')] = (self.performanceDict[code][(curQuar, 'EPS')] -
+                                                            self.performanceDict[code][(rightBeforeQuar, 'EPS')]) / \
+                                                           self.performanceDict[code][(rightBeforeQuar, 'EPS')] * 100
+
+            if np.isnan(perfDF.loc[code, (rightAfterQuar, 'EPS')]):
+                pass
+            elif perfDF.loc[code, (rightAfterQuar, 'EPS')] < 0:
+                self.performanceDict[code][('EXP_RIGHT_AFTER', 'EPS')] = 9999
+            else:
+                self.performanceDict[code][('EXP_RIGHT_AFTER', 'EPS')] = (self.performanceDict[code][(rightAfterQuar, 'EPS')] -
+                                                            self.performanceDict[code][(curQuar, 'EPS')]) / \
+                                                           self.performanceDict[code][(curQuar, 'EPS')] * 100
+
+            if np.isnan(perfDF.loc[code, (lastSameQuar, 'EPS')]):
+                pass
+            elif perfDF.loc[code, (lastSameQuar, 'EPS')] < 0:
+                self.performanceDict[code][('VS_LAST_SAME', 'EPS')] = 9999
+            else:
+                self.performanceDict[code][('VS_LAST_SAME', 'EPS')] = (self.performanceDict[code][(curQuar, 'EPS')] -
+                                                            self.performanceDict[code][(lastSameQuar, 'EPS')]) / \
+                                                           self.performanceDict[code][(lastSameQuar, 'EPS')] * 100
+
+            if np.isnan(perfDF.loc[code, (rightBeforeYear, 'EPS')]):
+                pass
+            elif perfDF.loc[code, (rightBeforeYear, 'EPS')] < 0:
+                self.performanceDict[code][('VS_LAST_YEAR', 'EPS')] = 9999
+            else:
+                self.performanceDict[code][('VS_LAST_YEAR', 'EPS')] = (self.performanceDict[code][(curYear, 'EPS')] -
+                                                            self.performanceDict[code][(rightBeforeYear, 'EPS')]) / \
+                                                           self.performanceDict[code][(rightBeforeYear, 'EPS')] * 100
+
+        for code in deleteCodeList:
+            del self.performanceDict[code]
+
+        self.performanceDict = DataFrame(self.performanceDict).transpose().\
+            sort_values(by=[('VS_LAST_SAME','EPS')], ascending=False)\
+            [[('VS_RIGHT_BEFORE', 'EPS'),('EXP_RIGHT_AFTER', 'EPS'),('VS_LAST_SAME', 'EPS'),('VS_LAST_YEAR', 'EPS')
+              ,(curYear,'EPS'),(rightBeforeYear,'EPS'),(curYear,'PER'),(rightBeforeYear,'PER')
+              ,(curYear,'BPS'),(rightBeforeYear,'BPS'),(curYear,'PBR'),(rightBeforeYear,'PBR')
+              ,(rightAfterQuar,'EPS'),(curQuar,'EPS'),(rightBeforeQuar,'EPS'),(lastSameQuar,'EPS')
+              ,(rightAfterQuar,'PER'),(curQuar,'PER'),(rightBeforeQuar,'PER'),(lastSameQuar,'PER')
+              ,(rightAfterQuar,'BPS'),(curQuar,'BPS'),(rightBeforeQuar,'BPS'),(lastSameQuar,'BPS')
+              ,(rightAfterQuar,'PBR'),(curQuar,'PBR'),(rightBeforeQuar,'PBR'),(lastSameQuar,'PBR')]].transpose().to_dict()
+        return self.performanceDict
+
+    def setNaverPerformance(self, code, df, QuarStr):
+        if code in self.performanceDict:
+            pass
+        else:
+            self.performanceDict[code] = {}
+        codePerfDic = self.performanceDict[code]
+
+        if 'EPS(원)' in df.index and QuarStr in df.columns:
+            codePerfDic[(QuarStr, 'EPS')] = float(df.loc['EPS(원)', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'EPS')] = np.nan
+        if 'BPS(원)' in df.index and QuarStr in df.columns:
+            codePerfDic[(QuarStr, 'BPS')] = float(df.loc['BPS(원)', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'BPS')] = np.nan
+        if 'PBR(배)' in df.index and QuarStr in df.columns:
+            codePerfDic[(QuarStr, 'PBR')] = float(df.loc['PBR(배)', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'PBR')] = np.nan
+        if 'PER(배)' in df.index and QuarStr in df.columns:
+            codePerfDic[(QuarStr, 'PER')] = float(df.loc['PER(배)', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'PER')] = np.nan
+
+    def setFnguidePerformance(self, code, df, QuarStr):
+        if code in self.performanceDict:
+            pass
+        else:
+            self.performanceDict[code] = {}
+        codePerfDic = self.performanceDict[code]
+
+        if 'EPS(원)' in df.index and QuarStr in df.columns and df.loc['EPS(원)', QuarStr] != '-':
+            codePerfDic[(QuarStr, 'EPS')] = float(df.loc['EPS(원)', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'EPS')] = np.nan
+        if 'BPS(원)' in df.index and QuarStr in df.columns and df.loc['BPS(원)', QuarStr] != '-':
+            codePerfDic[(QuarStr, 'BPS')] = float(df.loc['BPS(원)', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'BPS')] = np.nan
+        if 'PBR' in df.index and QuarStr in df.columns and df.loc['PBR', QuarStr] != '-':
+            codePerfDic[(QuarStr, 'PBR')] = float(df.loc['PBR', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'PBR')] = np.nan
+        if 'PER' in df.index and QuarStr in df.columns and df.loc['PER', QuarStr] != '-':
+            codePerfDic[(QuarStr, 'PER')] = float(df.loc['PER', QuarStr])
+        else:
+            codePerfDic[(QuarStr, 'PER')] = np.nan
+
     def sortDictByListSize(self, originDict):
+        """
+        dict내 value가 list형일때 list개수가 많은 순으로 정렬하는 알고리즘
+        :param originDict:
+        :return:
+        """
         newDict = {}
         keyList = list(originDict.keys())
         itemList = list(originDict.items())
@@ -377,3 +660,8 @@ class Analyze:
         # checkDate = [585,586,587,588,589,590]
         # print("info = ",kospiDF.iloc[checkDate])
         return chartDF
+
+
+if __name__ == "__main__":
+    curQuar = Analyze().calCurQuarter()
+    print(curQuar)
